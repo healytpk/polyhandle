@@ -15,7 +15,7 @@ __attribute__((noinline)) void *GetMostDerived(T &&obj) noexcept
 struct Base1 { int a; };               // not polymorphic
 struct Base2 { virtual ~Base2(){} };   // polymorphic
 struct Derived : Base1, virtual Base2 { virtual ~Derived(){} };
-struct Frog { virtual ~Frog(){} };
+//struct Frog { virtual ~Frog(){} };
 
 std::uint16_t ExtractSecretNumber(void const *const arg_machine_code)
 {
@@ -48,12 +48,12 @@ extern decltype(auto) Func(void)
 {
     Derived obj;
     Base2 &b = obj;
-    Frog f;
+    //Frog f;
     std::stringstream ss;
     return std::array {
             GetSecretNumber(obj),
             GetSecretNumber(b),
-            GetSecretNumber(f),
+            //GetSecretNumber(f),
             GetSecretNumber(ss),
         };
 }
