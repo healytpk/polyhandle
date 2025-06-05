@@ -72,6 +72,20 @@ extern decltype(auto) Func2(void)
         };
 }
 
+extern decltype(auto) Func3(void)
+{
+    Derived obj;
+    Base2 &b = obj;
+    Frog f;
+    std::stringstream ss;
+    return std::array {
+            &typeid(obj),
+            &typeid(b),
+            &typeid(f),
+            &typeid(ss),
+        };
+}
+
 int main(void)
 {
     auto myarray = Func();
@@ -85,4 +99,11 @@ int main(void)
     {
         std::cout << "0x" << std::hex << std::setfill('0') << std::setw(16u) << e << std::endl;
     }
+
+    auto myarray3 = Func3();
+    for ( auto const &e : myarray3 )
+    {
+        std::cout << "0x" << std::hex << std::setfill('0') << std::setw(16u) << e << std::endl;
+    }
 }
+
