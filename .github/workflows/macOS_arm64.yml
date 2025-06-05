@@ -22,6 +22,9 @@ jobs:
         echo "LDFLAGS=-L$(brew --prefix llvm)/lib" >> $GITHUB_ENV
         echo "CPPFLAGS=-I$(brew --prefix llvm)/include" >> $GITHUB_ENV
 
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
     - name: Run GNU Make with GNU compiler
       run: |
         ./build_and_run.sh
