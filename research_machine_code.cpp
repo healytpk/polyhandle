@@ -7,7 +7,7 @@
 #include <type_traits>              // is_polymorphic, remove_cvref
 
 template<class T> requires std::is_polymorphic_v< std::remove_cvref_t<T> >
-__attribute__((noinline)) void *GetMostDerived(T &&obj) noexcept
+__attribute__((noinline, no_ptrauth)) void *GetMostDerived(T &&obj) noexcept
 {
     return dynamic_cast<void*>( std::addressof(obj) );
 }
