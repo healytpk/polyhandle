@@ -12,9 +12,20 @@ struct Base1 { int a; };               // not polymorphic
 struct Base2 { virtual ~Base2(){} };   // polymorphic
 struct Derived : Base1, virtual Base2 { virtual ~Derived(){} };
 
-extern std::array<void*, 2u> Func(void)
+struct Frog { virtual ~Frog(){} };
+
+#include <sstream>
+
+extern decltype(auto) Func(void)
 {
     Derived obj;
     Base2 &b = obj;
-    return { GetMostDerived(obj), GetMostDerived(b) };
+    Frog f;
+    std::stringstream ss;
+    return std::array{
+            GetMostDerived(obj),
+            GetMostDerived(b),
+            GetMostDerived(f),
+            GetMostDerived(ss),
+        };
 }
