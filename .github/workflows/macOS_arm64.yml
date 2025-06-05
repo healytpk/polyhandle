@@ -1,0 +1,32 @@
+name: macOS_arm64
+
+on:
+  push:
+    branches: '*'
+  pull_request:
+    branches: '*'
+  workflow_dispatch:
+    branches: '*'
+
+jobs:
+  build:
+
+    runs-on: macos-15
+
+    steps:
+    - name: Install newer version of compiler
+      run: |
+        brew update
+        brew install llvm
+        echo "PATH=$(brew --prefix llvm)/bin:$PATH" >> $GITHUB_ENV
+        echo "LDFLAGS=-L$(brew --prefix llvm)/lib" >> $GITHUB_ENV
+        echo "CPPFLAGS=-I$(brew --prefix llvm)/include" >> $GITHUB_ENV
+
+    - name: Run GNU Make with GNU compiler
+      run: |
+        ./build_and_run.sh
+
+    - uses: actions/upload-artifact@v4
+      with:
+        name: artifacts_macOS_arm64
+        path: ./
