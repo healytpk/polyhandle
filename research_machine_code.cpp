@@ -72,6 +72,7 @@ extern decltype(auto) Func2(void)
         };
 }
 
+/*
 extern decltype(auto) Func3(void)
 {
     Derived obj;
@@ -85,6 +86,7 @@ extern decltype(auto) Func3(void)
             &typeid(ss),
         };
 }
+*/
 
 int main(void)
 {
@@ -100,10 +102,12 @@ int main(void)
         std::cout << "0x" << std::hex << std::setfill('0') << std::setw(16u) << e << std::endl;
     }
 
+/*
     auto myarray3 = Func3();
     for ( auto const &e : myarray3 )
     {
         std::cout << "0x" << std::hex << std::setfill('0') << std::setw(16u) << e << std::endl;
     }
+*/
 }
 
