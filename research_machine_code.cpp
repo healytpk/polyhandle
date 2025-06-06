@@ -94,25 +94,30 @@ extern decltype(auto) Func3(void)
         };
 }
 
-
 int main(void)
 {
+    std::cout << "Got to here - before Func\n";
     auto myarray = Func();
     for ( auto const &e : myarray )
     {
         std::cout << "0x" << std::hex << std::setfill('0') << std::setw(2u) << e << std::endl;
     }
+    std::cout << "Got to here - after Func\n";
 
+    std::cout << "Got to here - before Func2\n";
     auto myarray2 = Func2();
     for ( auto const &e : myarray2 )
     {
         std::cout << "0x" << std::hex << std::setfill('0') << std::setw(16u) << e << std::endl;
     }
+    std::cout << "Got to here - after Func2\n";
 
+    std::cout << "Got to here - before Func3\n";
     auto myarray3 = Func3();
     for ( auto const &e : myarray3 )
     {
         std::cout << "0x" << std::hex << std::setfill('0') << std::setw(16u) << e << std::endl;
     }
+    std::cout << "Got to here - after Func3\n";
 }
 
