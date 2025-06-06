@@ -1,4 +1,5 @@
 typedef struct {} mbstate_t;
+namespace std { typedef struct {} mbstate_t; }
 #include <cstdint>                  // uint16_t
 #include <array>                    // array
 #include <iomanip>                  // hex, setfill, setw
