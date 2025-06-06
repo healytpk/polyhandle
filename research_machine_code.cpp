@@ -96,6 +96,9 @@ extern decltype(auto) Func3(void)
 
 int main(void)
 {
+    std::cout << "First line in main\n";
+
+#if 0
     std::cout << "Got to here - before Func\n";
     auto myarray = Func();
     for ( auto const &e : myarray )
@@ -119,5 +122,8 @@ int main(void)
         std::cout << "0x" << std::hex << std::setfill('0') << std::setw(16u) << e << std::endl;
     }
     std::cout << "Got to here - after Func3\n";
+#endif
+
+    std::cout << "Last line in main\n";
 }
 
