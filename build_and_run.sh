@@ -1,6 +1,6 @@
 #!/bin/sh
 clang++ -o research_machine_code.o -c research_machine_code.cpp \
-        -std=c++20 -arch arm64e -DNDEBUG -O3
+        -std=c++23 -arch arm64 -DNDEBUG -O3
         #-fno-rtti -fno-exceptions \
         #-fptrauth-calls \
         #-fptrauth-vtable-pointer-address-discrimination \
@@ -10,7 +10,7 @@ clang++ -o research_machine_code.o -c research_machine_code.cpp \
 objdump -d research_machine_code.o | tee output_research_machine_code.txt
 
 clang++ -o prog research_machine_code.cpp \
-        -std=c++20 -arch arm64e -DNDEBUG -O3
+        -std=c++23 -arch arm64 -DNDEBUG -O3
         #-fno-rtti -fno-exceptions \
         #-fptrauth-calls \
         #-fptrauth-vtable-pointer-address-discrimination \
@@ -18,5 +18,4 @@ clang++ -o prog research_machine_code.cpp \
         #-fptrauth-type-info-vtable-pointer-discrimination
 
 echo ===== build script about to run program ===========================
-codesign -f -s - ./prog
 ./prog
