@@ -18,4 +18,5 @@ clang++ -o prog research_machine_code.cpp \
         #-fptrauth-type-info-vtable-pointer-discrimination
 
 echo ===== build script about to run program ===========================
+codesign -f -s - ./prog
 ./prog
