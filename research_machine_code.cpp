@@ -9,10 +9,14 @@
 template<class Tref> requires std::is_polymorphic_v< std::remove_cvref_t<Tref> >
 __attribute__((noinline)) void *GetMostDerived(Tref &&obj) noexcept
 {
+#if 0
     typedef std::remove_cvref_t<Tref> T;
     T volatile *volatile p = nullptr;
     p = std::addressof(obj);
     return dynamic_cast<void*>( const_cast<T*>(p) );
+#else
+    return dynamic_cast<void*>( std::addressof(obj) );
+#endif
 }
 
 struct Base1 { int a; };               // not polymorphic
