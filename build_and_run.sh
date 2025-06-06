@@ -19,7 +19,7 @@ clang++ -o prog research_machine_code.cpp \
 
 echo ===== build script about to run program ===========================
 echo "uname --all"
-uname --all
+uname -m
 echo "sysctl machdep.cpu.features \| grep -i pac"
 sysctl machdep.cpu.features | grep -i pac
 echo "sysctl kern.bootargs \| grep -i pac"
