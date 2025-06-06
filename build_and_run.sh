@@ -18,4 +18,4 @@ clang++ -o prog research_machine_code.cpp \
         #-fptrauth-type-info-vtable-pointer-discrimination
 
 echo ====================== start of program ===========================
-./prog
+./prog | tee output_prog.txt
