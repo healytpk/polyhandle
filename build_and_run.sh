@@ -18,8 +18,8 @@ clang++ -o prog research_machine_code.cpp \
         #-fptrauth-type-info-vtable-pointer-discrimination
 
 echo ===== build script about to run program ===========================
-echo "uname --all"
-uname -m
+echo "uname -a"
+uname -a
 echo "sysctl machdep.cpu.features \| grep -i pac"
 sysctl machdep.cpu.features | grep -i pac
 echo "sysctl kern.bootargs \| grep -i pac"
