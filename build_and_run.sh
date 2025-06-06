@@ -17,5 +17,5 @@ clang++ -o prog research_machine_code.cpp \
         #-fptrauth-vtable-pointer-type-discrimination \
         #-fptrauth-type-info-vtable-pointer-discrimination
 
-echo ====================== start of program ===========================
-./prog 2>&1 | tee output_prog.txt
+echo ===== build script about to run program ===========================
+./prog
