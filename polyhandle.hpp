@@ -17,7 +17,7 @@ public:
 
     constexpr void *object(void) const noexcept { return this->p; }
 
-    constexpr void *most_dervied(void) const noexcept
+    constexpr void *most_derived(void) const noexcept
     {
         return dynamic_cast<void*>( static_cast<DummyPolymorph*>(this->p) );
     }
@@ -75,7 +75,7 @@ public:
         return (char*)this->p - pvtable[-1][1];
     }
 
-    void *most_dervied(void) const noexcept
+    void *most_derived(void) const noexcept
     {
         return __RTCastToVoid( this->p );
     }
