@@ -1,0 +1,554 @@
+<style> body { hyphens: manual; } </style>
+<pre class='metadata'>
+Title: std::polyhandle
+Shortname: Pxxxx
+Revision: 0
+Status: NP
+Date: 2025-06-09
+Group: WG21
+Audience: EWGI,LEWGI
+Editor: Thomas PK Healy <healytpk@vir7ja7code7.com> (Remove all sevens from email address)
+ED: http://virjacode.com/papers/polyhandle_unpublished000.htm
+TR: http://virjacode.com/papers/polyhandle.htm
+Markup Shorthands: markdown on
+Abstract: Add a class to the standard library to manage a handle to a polymorphic object, with zero overhead on most compilers.
+</pre>
+
+# Introduction
+
+The C++ programming language provides powerful support for polymorphism via virtual method dispatch, runtime type identification, and dynamic casting. However, retrieving runtime type information or accessing the most-derived object requires compile-time knowledge of the static base types. This paper introduces `std::polyhandle`, a compact, type-erased polymorphic handle that encapsulates the identity of any polymorphic object in exactly one datum (`void*`), and allows runtime access to:
+
+- The address of the original sub-object
+- The address of the most-derived object
+- The `type_info` of the most-derived object
+
+On platforms implementing the Itanium C++ ABI (such as <i>GNU g++</i>, <i>LLVM clang++</i>, <i>Intel ICX</i>), the construction of an `std::polyhandle` is a total no-op at runtime. On the Microsoft compiler, the constructor adds an offset to the address of the object in order to get the address of the object's vtable pointer.
+
+# Motivation
+
+There are many situations where it is useful to store an abstract reference to a polymorphic object in a type-erased form, such as in reflection, serialization, inspection, dynamic casting, and debugging tools. While `std::any` and other non-template classes offer type erasure, they require more memory to store additional information.
+
+The key insight behind `std::polyhandle` is that all required runtime information about a polymorphic object is already available via the vtable pointer, and can be accessed with a single `void*`.
+
+In addition to retrieving the most-derived object pointer and type information, a common requirement is to safely cast back to a known type. To support this, polyhandle provides a dynamicCast<T>() method which serves the same purpose as the `dynamic_cast` operator. This works for both pointer and lvalue reference targets, and the class type T can be non-polymorphic. The noexcept specification is conditional on the pointer-ness of the target type, matching standard semantics of `dynamic_cast`.
+
+# API Overview
+
+```cpp
+class polyhandle {
+    void *p;
+public:
+    template<class T> requires is_polymorphic_v< remove_cvref_t<T> >
+    polyhandle(T &&obj) noexcept;
+
+    void *object(void) const noexcept;
+    void *most_derived(void) const noexcept;
+    std::type_info const &typeinfo(void) const noexcept;
+
+    template<class Tz>
+    requires    (is_pointer_v<Tz> && is_class_v< remove_pointer_t<Tz> >)
+             || (is_lvalue_reference_v<Tz> && is_class_v< remove_reference_t<Tz> >)
+    Tz polyhandle::dynamicCast(void) const noexcept(is_pointer_v<Tz>);
+};
+
+static_assert( sizeof (polyhandle) == sizeof (void*) );
+static_assert( alignof(polyhandle) == alignof(void*) );
+```
+# Compress three pointers into one
+
+In order to fully describe a polymorphic object at runtime, one might store:
+
+1. The pointer to the current sub-object (`void*`)
+2. The pointer to the most-derived object (`void*`)
+3. The pointer to the most-dervied object's `type_info`
+
+With `std::polyhandle`, all three can be recovered from a single pointer to the sub-object's vtable pointer.
+
+On Itanium ABI systems, the vtable pointer within the object stores enough information so that:
+
+- `dynamic_cast<void*>(subobject_ptr)` yields the address of the most-derived object
+- `typeid(*subobject_ptr)` yields the most-derived object's type information
+
+On Microsoft, `std::polyhandle` stores the adjusted pointer and calculates offsets using the data found within the `RTTICompleteObjectLocator`.
+
+Hence, `std::polyhandle` effectively compresses the three pointers into one with no loss of information.
+
+# ABI-Specific Behavior
+
+## Itanium ABI
+
+The Itanium C++ ABI is used on most compilers, such as <i>GNU g++</i>, <i>LLVM clang++</i>, <i>Intel ICX</i>. The ABI defines the behavior of `dynamic_cast<void*>(p)` and `typeid(*p)` such that they rely on the vtable pointer embedded in the object, which conveniently is always located at address `[base + 0x00]`.
+
+- `dynamic_cast<void*>(p)` returns the address of the most-derived object.
+- `typeid(*p)` returns the `type_info` of the most-dervied type.
+
+Thus, on compilers which implement the Itanium ABI, `std::polyhandle` is nothing more than:
+
+```cpp
+template<class T> requires is_polymorphic_v< remove_cvref_t<T> >
+polyhandle(T &&obj) noexcept
+{
+    this->p = const_cast< remove_cvref_t<T> * >(  addressof(obj)  );
+}
+```
+
+All subsequent queries (`most_derived`, `typeinfo`) consult the object's vtable to find the required data.
+
+## Microsoft ABI
+
+Microsoft's ABI requires a small adjustment, since the vtable pointer inside a polymorphic object might not be located at address `[base + 0x00]`.
+
+To support full recovery of the most-derived address and dynamic `std::type_info`, the constructor of `std::polyhandle`, instead of storing the address of the current object, stores the address of the current object's vtable pointer, as follows:
+
+```cpp
+template<class T> requires is_polymorphic_v< remove_cvref_t<T> >
+polyhandle(T &&obj) noexcept
+{
+    this->p  = const_cast< remove_cvref_t<T> * >(  addressof(obj)  );
+    this->p += __get_vtable_pointer_offset( remove_cvref_t<T> );
+}
+```
+
+Note that the Microsoft compiler doesn't currently provide a built-in operator, `__get_vtable_pointer_offset`, and so the implementation for Microsoft in this document intercepts calls to `__RTCastToVoid` in order to ascertain the class type's offset to the vtable pointer.
+
+All subsequent queries (`most_derived`, `typeinfo`) consult the object's `RTTICompleteObjectLocator` to find the required data.
+
+## Apple arm64e ABI
+
+Apple computers with an *Apple Silicon* CPU compile C++ code for the `arm64e` architecture, which uses *Pointer Authentication Code (PAC)* technology for the 64-Bit ARM instruction set (also known as the *aarch64* instruction set). On these Apple machines, the vtable pointer inside an object is encrypted, and must be decrypted using a 16-Bit secret number called a *discriminator*.
+
+Therefore, inside the constructor for `std::polyhandle`, this 16-Bit number must be stored somewhere in order to access the vtable later. 64-Bit ARM CPU's can access a maximum of 512 terrabytes of memory, and therefore only 49 bits of a pointer are needed. This leaves us 15 bits to store the 16-Bit discriminator. Furthermore, as any polymorphic object on the 64-bit Itanium C++ ABI will start with a vtable pointer, this means that the alignment of any polymorphic class is always >= 8, and therefore the lowest 3 bits of the object's address will always be zero. This means we have 18 bits available to us to store the 16-Bit discriminator.
+
+The upper 15 bits of a pointer might however be used for *Pointer Authentication Code (PAC)*, *Memory Tagging Extension (MTE)* or *Address Space Layout Randomization (ASLR)*. I'm hoping I can get around this by applying attributes to the pointer, such as:
+
+```
+class polyhandle {
+    void *p __attribute__((no_pac,no_mte));
+public:
+    . . .
+    . . .
+};
+```
+
+I'm eager to test this out but I don't currently have access to a new Apple Silicon computer. Email me if you can give me SSH access to such an machine to test binaries.
+
+# Properties
+
+- *Size*: `sizeof(polyhandle) == sizeof(void*)`
+- *Alignment*: `alignof(polyhandle) == alignof(void*)`
+- *Non-polymorphic, no virtual functions
+- *No global container or heap allocation needed to store extra data*
+- *Supports all polymorphic C++ types*
+
+# Usage Example
+
+```cpp
+#include <iostream>    // cout, endl
+using std::cout, std::endl;
+
+struct Base0 { virtual ~Base0(){} };                           // polymorphic
+struct Base1 { void *p[600]; };                                // -- NOT polymorphic
+struct Base2 { virtual ~Base2(){} };                           // polymorphic
+struct Base3 { virtual ~Base3(){} };                           // polymorphic
+struct Base3a : Base0, Base3 {};                               // polymorphic
+struct Base3b : Base1, virtual Base3a {};                      // polymorphic
+struct BaseMiddle : Base3b {};                                 // plymorphic
+struct Base4 { virtual ~Base4(){} };                           // polymorphic
+struct Derived : virtual Base2, virtual BaseMiddle, Base4 {};  // polymorphic
+
+int main(void)
+{
+    Derived objz;
+    cout << "Derived    : " << (void*)&objz << endl;
+    cout << "Base0      : " << (void*)static_cast<Base0     *>(&objz) << endl;
+    cout << "Base1      : " << (void*)static_cast<Base1     *>(&objz) << endl;
+    cout << "Base2      : " << (void*)static_cast<Base2     *>(&objz) << endl;
+    cout << "Base3      : " << (void*)static_cast<Base3     *>(&objz) << endl;
+    cout << "Base3a     : " << (void*)static_cast<Base3a    *>(&objz) << endl;
+    cout << "Base3b     : " << (void*)static_cast<Base3b    *>(&objz) << endl;
+    cout << "BaseMiddle : " << (void*)static_cast<BaseMiddle*>(&objz) << endl;
+    cout << "Base4      : " << (void*)static_cast<Base4     *>(&objz) << endl;
+    cout << "===========================\n";
+
+    Base0 *const pbase = &objz;
+    std::polyhandle p(*pbase);
+    cout << "Object      : " << p.object()               << endl;
+    cout << "Most derived: " << p.most_derived()         << endl;
+    cout << "Base2       : " << p.dynamicCast<Base2 *>() << endl;
+    cout << "Base3a      : " << p.dynamicCast<Base3a*>() << endl;
+    cout << "Base1       : " << p.dynamicCast<Base1 *>() << endl;
+}
+
+```
+
+# Implementations
+
+## Itanium (GNU, LLVM, Intel)
+
+```cpp
+#include <cstdint>        // intptr_t
+#include <memory>         // addressof
+#include <type_traits>    // conditional, is_class, is_lvalue_reference
+                          // is_pointer, is_polymorphic, remove_cvref
+#include <typeinfo>       // bad_cast, type_info
+#include <cxxabi.h>       // __cxxabiv1::
+
+namespace std {
+class polyhandle final {
+    void *p;
+public:
+    template<class Tref> requires is_polymorphic_v< remove_cvref_t<Tref> >
+    constexpr polyhandle(Tref &&obj) noexcept
+      : p( const_cast< remove_cvref_t<Tref> * >(addressof(obj)) ) {}
+
+    constexpr void *object(void) const noexcept { return this->p; }
+
+    constexpr void *most_derived(void) const noexcept
+    {
+        return static_cast<char*>(this->p) + static_cast<intptr_t**>(this->p)[0][-2];
+    }
+
+    constexpr type_info const &typeinfo(void) const noexcept
+    {
+        return static_cast<type_info***>(this->p)[0][-1][0];
+    }
+
+    template<class Tz> 
+    requires    (is_pointer_v<Tz> && is_class_v< remove_pointer_t<Tz> >)
+             || (is_lvalue_reference_v<Tz> && is_class_v< remove_reference_t<Tz> >)
+    Tz dynamicCast(void) const noexcept(is_pointer_v<Tz>);
+};
+
+static_assert( sizeof (polyhandle) == sizeof (void*) );
+static_assert( alignof(polyhandle) == alignof(void*) );
+
+template<class Tz>
+requires    (is_pointer_v<Tz> && is_class_v< remove_pointer_t<Tz> >)
+         || (is_lvalue_reference_v<Tz> && is_class_v< remove_reference_t<Tz> >)
+Tz polyhandle::dynamicCast(void) const noexcept(is_pointer_v<Tz>)
+{
+    using std::ptrdiff_t;
+    using __cxxabiv1::__class_type_info;
+    using __cxxabiv1::__si_class_type_info;
+    using __cxxabiv1::__vmi_class_type_info;
+    using __cxxabiv1::__base_class_type_info;
+
+    typedef conditional_t< is_lvalue_reference_v<Tz>, remove_reference_t<Tz>, remove_pointer_t<Tz> > T;
+
+    static_assert( is_class_v<T> );
+    // T might have 'const' or 'volatile' on it but won't be a reference or a pointer
+    __class_type_info const &dst = static_cast<__class_type_info const&>( typeid(T) );
+
+    auto const mylambda = [&dst](auto &&self, void *const most_derived, __class_type_info const &src) -> void*
+      {
+        // First check if the source type has a single non-virtual base class at offset 0x00 (i.e. __si_class)
+        __si_class_type_info const *const psi  = dynamic_cast<__si_class_type_info const*>(&src);
+        if ( nullptr != psi )
+        {
+            __class_type_info const &base_cti = *psi->__base_type;
+            if ( base_cti == dst ) return most_derived;
+            // Now we go recursively to see if it's a base of a base (...of a base, of a base)
+            return self(self, most_derived, base_cti);
+        }
+
+        __vmi_class_type_info const *const pvmi = dynamic_cast<__vmi_class_type_info const *>(&src);
+        if ( nullptr == pvmi ) return nullptr;
+
+        for ( unsigned i = 0u; i < pvmi->__base_count ; ++i )
+        {
+            __base_class_type_info const *const info = &pvmi->__base_info[i];
+            if ( false == info->__is_public_p() ) continue;
+            intptr_t offset = info->__offset();
+
+            if ( info->__is_virtual_p() )
+            {
+                intptr_t const *p_offset = *static_cast<intptr_t**>(most_derived);
+                p_offset += offset/sizeof(intptr_t);
+                offset = *p_offset;
+            }
+
+            __class_type_info const &base_cti = *info->__base_type;
+            char *const target = static_cast<char*>(most_derived) + offset;
+            if ( base_cti == dst ) return target;
+
+            // Now we go recursively to see if it's a base of a base (...of a base, of a base)
+            // IMPORTANT NOTE: The value of 'most_derived' had been adjusted
+            void *const retval = self(self, target, base_cti);
+            if ( nullptr != retval ) return retval;
+        }
+
+        return nullptr;
+      };
+
+	T *const retval = static_cast<T*>(mylambda(  mylambda, this->most_derived(), static_cast<__class_type_info const&>(this->typeinfo())  ));
+
+    if constexpr ( is_pointer_v<Tz> )
+    {
+        return retval;
+    }
+    else
+    {
+        if ( nullptr != retval ) return *retval;
+        throw bad_cast{};
+    }
+}
+}  // close namespace std
+```
+
+Tested and working up on GodBolt: <a href="https://godbolt.org/z/fGbKjqrvG">https://godbolt.org/z/fGbKjqrvG</a>
+
+## Microsoft
+
+```cpp
+#include <cstdint>        // uint32_t
+#include <memory>         // addressof
+#include <type_traits>    // is_polymorphic, remove_cvref
+
+#include <iostream>
+using std::cout, std::endl;
+
+extern "C" {
+    // Including <Windows.h> is too much
+    void *__stdcall GetModuleHandleA(char const*);
+    void *__stdcall LoadLibraryA    (char const*);
+    void *__stdcall GetProcAddress  (void*,char const*);
+}
+
+namespace std {
+class polyhandle final {
+    void *p;
+
+    // We will use a thread_local variable to keep track of
+    // the address that gets passed to __RTCastToVoid, because
+    // this address will have been adjusted by the offset to
+    // the location of the vtable pointer inside the object.
+    inline static thread_local void const *argument_to_RTCTV = nullptr;
+    friend void *::__RTCastToVoid(void *const arg) noexcept(false);
+
+    template<class Tref>
+    requires std::is_polymorphic_v< std::remove_cvref_t<Tref> >
+    static std::uint32_t GetOffsetToVftable(Tref &&obj)
+    {
+        typedef std::remove_cvref_t<Tref> T;
+        T *const p = const_cast<T*>( std::addressof(obj) );
+        (void)dynamic_cast<void*>(p);
+        return (char*)argument_to_RTCTV - (char*)p;
+    }
+
+public:
+    template<class Tref> requires is_polymorphic_v< remove_cvref_t<Tref> >
+    constexpr polyhandle(Tref &&obj) noexcept
+    {
+        uintptr_t n = GetOffsetToVftable(obj);
+        n <<= 48u;
+        n |= (uintptr_t)addressof(obj);
+        this->p = (void*)n;
+    }
+
+    constexpr void *object(void) const noexcept
+    {
+        uintptr_t const n = (uintptr_t)this->p;
+        uintptr_t const addr_of_vtable_ptr = n & 0x0000FFFFFFFFFFFF;
+        uint16_t  const offset = n >> 48u;
+
+        return (void*)(addr_of_vtable_ptr - offset);
+    }
+
+    void *most_derived(void) const noexcept
+    {
+        uintptr_t const n = (uintptr_t)this->p;
+        uintptr_t const addr_of_vtable_ptr = n & 0x0000FFFFFFFFFFFF;
+        uint32_t **const pvtable = *static_cast<uint32_t***>( (void*)addr_of_vtable_ptr );
+        return (char*)addr_of_vtable_ptr - pvtable[-1][1];
+    }
+
+    type_info const &typeinfo(void) const noexcept
+    {
+        uint32_t const n = static_cast<uint32_t***>(this->p)[0][-1][3];
+
+#ifdef _WIN64
+        return *(type_info*)(  (char*)GetModuleHandleA(nullptr) + n  );
+#else
+        return *(type_info*)n;
+#endif
+    }
+
+    template<class Tz> 
+    requires    (is_pointer_v<Tz> && is_class_v< remove_pointer_t<Tz> >)
+             || (is_lvalue_reference_v<Tz> && is_class_v< remove_reference_t<Tz> >)
+    Tz dynamicCast(void) const noexcept(is_pointer_v<Tz>);
+};
+
+static_assert( sizeof (polyhandle) == sizeof (void*) );
+static_assert( alignof(polyhandle) == alignof(void*) );
+
+namespace detail_for_polyhandle {
+
+struct RTTICompleteObjectLocator {
+    uint32_t signature;
+    uint32_t offset;
+    uint32_t cdOffset;
+     int32_t pTypeDescriptor;
+     int32_t pClassDescriptor;
+     int32_t pSelf;
+};
+
+struct TypeDescriptor {
+    void const *pVFTable;
+    void       *spare;
+    char        name[];
+};
+
+struct RTTIClassHierarchyDescriptor {
+    uint32_t signature;
+    uint32_t attributes;
+    uint32_t numBaseClasses;
+     int32_t pBaseClassArray;
+};
+
+struct RTTIBaseClassArray {
+    int32_t arrayOfBaseClassDescriptors[];
+};
+
+struct RTTIBaseClassDescriptor {
+     int32_t pTypeDescriptor;
+    uint32_t numContainedBases;
+    struct PMD {
+        int32_t mdisp;
+        int32_t pdisp;
+        int32_t vdisp;
+    } where;
+    uint32_t attributes;
+     int32_t pClassDescriptor;
+};
+
+}  // close namespace 'detail_for_polyhandle'
+
+#define DEBUG_PRINT(x) do {   } while (false)
+//#define DEBUG_PRINT(x) do { x } while (false)
+
+template<class Tz> 
+requires    (is_pointer_v<Tz> && is_class_v< remove_pointer_t<Tz> >)
+         || (is_lvalue_reference_v<Tz> && is_class_v< remove_reference_t<Tz> >)
+Tz polyhandle::dynamicCast(void) const noexcept(is_pointer_v<Tz>)
+{
+    using namespace detail_for_polyhandle;
+
+    typedef conditional_t< is_lvalue_reference_v<Tz>, remove_reference_t<Tz>, remove_pointer_t<Tz> > T;
+
+    uintptr_t const n = (uintptr_t)this->p;
+    uintptr_t const addr_of_vtable_ptr = n & 0x0000FFFFFFFFFFFF;
+    uint16_t  const offset_to_vtable_ptr = n >> 48u;
+    DEBUG_PRINT( cout << "---- Address of current object = " << this->object() << endl; );
+
+    void ***const ppvtable = (void***)(void*)(n & 0x0000FFFFFFFFFFFF);
+    DEBUG_PRINT( cout << "Address of vtable pointer = " << (void*)ppvtable << endl; );
+
+    void **const pvtable = *ppvtable;
+    DEBUG_PRINT( cout << "Address of vtable = " << (void*)pvtable << endl; );
+
+    auto &locator = *(RTTICompleteObjectLocator*)pvtable[-1];
+    DEBUG_PRINT( cout << "Address of Locator = " << (void*)&locator << endl; );
+
+    //std::int32_t const offset_from_most_derived_to_base_vftable_ptr = locator.offset;
+    //DEBUG_PRINT( cout << "Offset to most-derived = " << offset_from_most_derived_to_base_vftable_ptr << endl; );
+
+    DEBUG_PRINT( cout << "Address of most derived = " << this->most_derived() << endl; );
+
+    char *const imageBase = (char*)&locator - locator.pSelf;
+
+    auto *const chd = (RTTIClassHierarchyDescriptor*)(imageBase + locator.pClassDescriptor);
+    DEBUG_PRINT( cout << "Address of hierarchy struct: " << (void*)chd << endl; );
+
+    DEBUG_PRINT( cout << "Count bases = " << chd->numBaseClasses << endl; );
+
+    auto *const baseArray = (RTTIBaseClassArray*)(imageBase + chd->pBaseClassArray);
+    DEBUG_PRINT( cout << "Address of array of Base descriptors: " << (void*)baseArray << endl; );
+
+    for ( unsigned i = 0u; i < chd->numBaseClasses; ++i )
+    {
+        DEBUG_PRINT( cout << "Base No. " << i; );
+
+        auto *const base = (RTTIBaseClassDescriptor *)(imageBase + baseArray->arrayOfBaseClassDescriptors[i]);
+
+        DEBUG_PRINT( cout << ", mdisp = " << base->where.mdisp; );
+        DEBUG_PRINT( cout << ", pdisp = " << base->where.pdisp; );
+        DEBUG_PRINT( cout << ", vdisp = " << base->where.vdisp; );
+        DEBUG_PRINT( cout << ", "; );
+
+// ================ I need to figure out the following:
+#if 0
+        char *base_object = (char*)this->most_derived() + 8;  // we'll add an offset to this later
+#else
+        char *vftable_ptr_location = (char*)((uintptr_t)(this->p) & 0x0000FFFFFFFFFFFF);  // where the vftable pointer is stored
+        char *base_object = vftable_ptr_location - locator.offset + 8;           // back-calculate to most-derived
+#endif
+
+        if ( -1 == base->where.pdisp ) base_object += base->where.mdisp;
+        else
+        {
+            char *const vbtable_ptr = *(char**)( (char*)this->most_derived() + base->where.pdisp );
+            int32_t const dynamic_offset = *(int32_t*)(vbtable_ptr + base->where.vdisp);
+            base_object += dynamic_offset;
+        }
+
+        DEBUG_PRINT( cout << "base object address = " << (void*)base_object; );
+        std::type_info &ti = *(std::type_info*)(imageBase + base->pTypeDescriptor);
+        DEBUG_PRINT( cout << ", " << ti.name() << endl; );
+        if ( base_object == this->object() )
+        {
+            DEBUG_PRINT( cout << "Found a match!" << endl; );
+            void *hRuntime = ::GetModuleHandleA("vcruntime140.dll");
+            if ( nullptr == hRuntime ) hRuntime = ::LoadLibraryA("vcruntime140.dll");
+            if ( nullptr == hRuntime ) return nullptr;
+            auto const fp = (void *(__cdecl *)(void*,long,void*,void*,int) noexcept) ::GetProcAddress(hRuntime, "__RTDynamicCast");
+            if ( nullptr == fp ) return nullptr;
+            T *const retval = static_cast<T*>(fp(
+                this->object(),
+                offset_to_vtable_ptr,
+                (void*)&ti,
+                (void*)&typeid(T),
+                0));
+
+            if constexpr ( is_pointer_v<Tz> ) return retval;
+            else if ( nullptr != retval ) return *retval;
+            else throw bad_cast{};
+        }
+    }
+
+    if constexpr ( is_pointer_v<Tz> ) return nullptr;
+    else throw bad_cast{};
+}
+
+} // close namespaces std
+
+// We intercept calls to this function:
+extern "C" {
+inline void *__RTCastToVoid(void *const arg) noexcept(false)
+{
+    std::polyhandle::argument_to_RTCTV = arg;  // save this to do a subtraction later!
+
+    void *hRuntime = ::GetModuleHandleA("vcruntime140.dll");
+    if ( nullptr == hRuntime ) hRuntime = ::LoadLibraryA("vcruntime140.dll");
+    if ( nullptr == hRuntime ) return nullptr;
+    auto const fp = (void*(*)(void *)) ::GetProcAddress(hRuntime, "__RTCastToVoid");
+    if ( nullptr == fp ) return nullptr;
+    return fp(arg);
+}
+}
+```
+
+Tested and working up on GodBolt: <a href="https://godbolt.org/z/5TPKjMfGT">https://godbolt.org/z/5TPKjMfGT</a>
+
+# Use Cases
+
+- Generic logging of polymorphic types
+- Lightweight RTTI in embedded systems
+- Type-erased polymorphic containers
+- Debug and visualization tools
+- Serialization frameworks that capture dynamic types
+
+# Conclusion
+
+`std::polyhandle` provides a zero-overhead, type-erased handle to polymorphic objects that works transparently across platforms. On Itanium ABI systems, the construction of an `std::polyhandle` is a complete no-op. On Microsoft, it uses ABI-compliant mechanisms to extract and reconstruct the necessary information.
+

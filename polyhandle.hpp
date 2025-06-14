@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>        // uintptr_t
 #include <memory>         // addressof
 #include <type_traits>    // is_polymorphic, remove_cvref
 #include <typeinfo>       // type_info
@@ -9,7 +10,6 @@
 namespace std {
 class polyhandle final {
     void *p;
-    struct DummyPolymorph { virtual ~DummyPolymorph(){} };
 public:
     template<class Tref> requires is_polymorphic_v< remove_cvref_t<Tref> >
     constexpr polyhandle(Tref &&obj) noexcept
@@ -19,12 +19,14 @@ public:
 
     constexpr void *most_derived(void) const noexcept
     {
-        return dynamic_cast<void*>( static_cast<DummyPolymorph*>(this->p) );
+        uintptr_t const *const ptr = *static_cast<uintptr_t const* const*>( this->p );
+        return static_cast<char*>(this->p) + ptr[-2];
     }
 
     constexpr type_info const &typeinfo(void) const noexcept
     {
-        return typeid( *static_cast<DummyPolymorph*>(this->p) );
+        auto *const ptr = *static_cast<type_info const* const* const*>( this->p );
+        return ptr[-1][0];
     }
 };
 }  // close namespace std
